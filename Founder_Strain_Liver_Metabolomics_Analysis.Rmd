@@ -1,0 +1,169 @@
+---
+title: "Founder_Strain_Liver_Metabolomics"
+author: "Anji"
+date: "December 15, 2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+require(knitr)
+opts_knit$set(root.dir = "P:/EAT_20190812_DO_Search05/FounderStrain")
+knitr::opts_chunk$set(root.dir = "P:/EAT_20190812_DO_Search05/FounderStrain/DataAnalysis/", warning = FALSE, message = FALSE)
+```
+
+```{r install_packages, echo=FALSE}
+library(plyr)
+library(tidyr)
+
+library(ggplot2)
+library(factoextra)
+
+library(pcaMethods)
+library(plotly)
+library(reshape2)
+
+
+```
+
+```{r load_data, echo=FALSE}
+# Read in 
+load("P:/EAT_20190812_DO_Search05/FounderStrain/DataAnalysis/Founder_Strain_Metabolomics_data.Rdata")
+
+```
+
+## Including Plots
+
+PCA plot usinng fviz_pca_ind method for visualization
+```{r PCA_plots, echo=FALSE}
+res.pca <- prcomp(t_FS_Metabolomics_df, scale. = TRUE)
+
+fviz_eig(res.pca) 
+fviz_pca_ind(res.pca,
+             geom = c("point","text"),
+             labelsize = 2,
+             habillage = Sample_meta$Date,
+             # addEllipses = TRUE,
+             # ellipse.level = 0.95,
+             repel = TRUE) +
+  labs(title = "Founder Strain Metabolomics - LIVER", x = "PC1", y = "PC2")+
+  theme_bw()
+
+```
+
+```{r morePCA_plots, echo=FALSE}
+
+sample.colors = as.numeric(factor(Sample_meta$Strain))
+plot(res.pca$x, pch = 19, cex = 1,
+     col = colors[sample.colors], 
+     main = "Principle Component Analysis\n Founder strain Metabolomics - Liver", 
+     #ylim = c(-20, 20), xlim = c(-20, -10), 
+     xlab = "PC1\n32.48%", ylab ="PC2\n10.27%")
+#text(res.pca$x[,1], res.pca$x[,2], labels = Sample_meta$Sample_ID)
+legend("topright", legend = levels(factor(Sample_meta$Strain)), pch = 16, 
+       col = colors[1:length(levels(factor(Sample_meta$Strain)))], y.intersp = 0.7)
+
+sample.colors = as.numeric(factor(Sample_meta$Date))
+plot(res.pca$x, pch = 19, cex = 1,
+     col = colors[sample.colors], 
+     main = "Principle Component Analysis\n Founder strain Metabolomics - Liver", 
+     #ylim = c(-20, 20), xlim = c(-20, -10), 
+     xlab = "PC1\n32.48%", ylab ="PC2\n10.27%")
+#text(res.pca$x[,1], res.pca$x[,2], labels = Sample_meta$Sample_ID)
+legend("topright", legend = levels(factor(Sample_meta$Date)), pch = 16, 
+       col = colors[1:length(levels(factor(Sample_meta$Date)))], y.intersp = 0.7)
+
+```
+
+
+```{r Tier_information, echo=FALSE}
+### Tier Information ####
+FS_tier <- as.matrix(FS_tier)
+
+length(grep("unknown", rownames(FS_tier)))
+
+FS_tier_unknown <- FS_tier[grep("unknown", rownames(FS_tier)),]
+FS_tier_id <- FS_tier[-grep("unknown", rownames(FS_tier)),]
+
+
+identify.features.3TierBelow <- function (x) {
+  
+  keep = vector()
+  
+  for (i in 1:nrow(x)) {
+    
+    tier1 <- length(which(x[i,] == 1))
+    tier2 <- length(which(x[i,] == 2))
+    tier3 <- length(which(x[i,] == 3))
+    
+    tier1_tier2_tier3 <- tier1+tier2+tier3
+    
+    total <- length(x[i,])
+    
+    percent <- tier1_tier2_tier3/total
+    
+    if(percent < .50){
+      keep <- append(keep, 0)
+    }else if(percent >= .50){
+      keep <- append(keep, 1)
+    }
+    
+  }
+  
+  tier_df <- data.frame(rownames(x), keep)
+  
+  return(tier_df)
+}
+
+FS_tier_info <- identify.features.3TierBelow(FS_tier)
+hist(FS_tier,
+     main = "Binning features by tier",
+     xlab = "Categories")
+
+ggplot(FS_tier_info, aes(x = keep)) +
+  geom_bar()+
+  geom_text(stat = 'count', aes(label=..count..), color = "white", vjust = 1.25)+
+  scale_x_continuous(breaks = seq(0,1,1), limit = c(-0.5,1.5))+
+  #scale_x_discrete(name = "Categories", limits = c("less than 50%", "above 50%"))+
+  labs(title = "Binning features by tier", subtitle = "Bin 0 = Tier 4-5, Bin 1 = Tier 1-3", x = "Categories")+
+  theme_bw()
+
+
+```
+
+```{r filter_byTier, echo=FALSE}
+keep_features <- FS_tier_info[which(FS_tier_info$keep == 1),1]
+
+
+filtered_FS_Metabolomics_df <- FS_LfQ[which(rownames(FS_LfQ) %in% keep_features),]
+t_filtered_FS_Metabolomics_df <- t(filtered_FS_Metabolomics_df)
+
+rownames(t_filtered_FS_Metabolomics_df) <- make.unique(Sample_meta$Sample_ID)
+
+```
+
+```{r filtered_PCA, echo=FALSE}
+res.pca_filtered <- prcomp(t_filtered_FS_Metabolomics_df[-grep("GC-EAT", rownames(t_filtered_FS_Metabolomics_df)),], scale. = TRUE)
+
+fviz_eig(res.pca_filtered) 
+fviz_pca_ind(res.pca_filtered,
+             geom = c("point","text"),
+             labelsize = 2,
+             habillage = Sample_meta$Date[-grep("GC-EAT", Sample_meta$Sample_ID)],
+             # addEllipses = TRUE,
+             # ellipse.level = 0.95,
+             repel = TRUE) +
+  labs(title = "Filtered by Tier Founder Strain Metabolomics - LIVER", x = "PC1", y = "PC2")+
+  theme_bw()
+
+fviz_pca_ind(res.pca_filtered,
+             geom = c("point","text"),
+             labelsize = 2,
+             habillage = Sample_meta$Strain[-grep("GC-EAT", Sample_meta$Sample_ID)],
+             # addEllipses = TRUE,
+             # ellipse.level = 0.95,
+             repel = TRUE) +
+  labs(title = "Filtered by Tier Founder Strain Metabolomics - LIVER", x = "PC1", y = "PC2")+
+  theme_bw()
+```
