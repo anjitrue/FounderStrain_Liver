@@ -6,6 +6,13 @@ output:
   html_document:
     df_print: paged
 ---
+The overaching goal will be to visualize the Liver GC Metabolomics data from the Founder Strain experiment. I have previously formatted the data and packaged it in a file called Founder_Strain_Metabolomics_data.Rdata. Within the Rdata file is:  
+1. LFQ dataframe  
+2. QuantMZ dataframe  
+3. RT information  
+4. Tier information  
+5. Meta for samples analyzed  
+6. Transformed dataframe wrangled appropriately for analysis
 
 ```{r setup, include=FALSE}
 require(knitr)
@@ -16,7 +23,8 @@ knitr::opts_chunk$set(root.dir = "P:/EAT_20190812_DO_Search05/FounderStrain/Data
 ```{r install_packages, echo=FALSE}
 library(plyr)
 library(tidyr)
-
+library(dplyr)
+library(tibble)
 library(ggplot2)
 library(factoextra)
 
@@ -29,13 +37,12 @@ library(reshape2)
 
 ```{r load_data, echo=FALSE}
 # Read in 
-load("P:/EAT_20190812_DO_Search05/FounderStrain/DataAnalysis/Founder_Strain_Metabolomics_data.Rdata")
+load("P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/Founder_Strain_Metabolomics_data.Rdata")
 
 ```
 
 ## Including Plots
-
-PCA plot usinng fviz_pca_ind method for visualization
+Visualization of Founder Strain Liver GC-Metabolomics data set before normalization. The PCA plot uses the package prcomp and fviz_pca_ind for visualization. An Scree plot describes how the variability in the data is described in each plane. The data is colored by date analyzed. Notice that two extra data points were included - controls from the DO dataset.
 ```{r PCA_plots, echo=FALSE}
 res.pca <- prcomp(t_FS_Metabolomics_df, scale. = TRUE)
 
@@ -52,6 +59,7 @@ fviz_pca_ind(res.pca,
 
 ```
 
+PCA plot visualized by the base R plot. 
 ```{r morePCA_plots, echo=FALSE}
 
 sample.colors = as.numeric(factor(Sample_meta$Strain))
@@ -76,7 +84,7 @@ legend("topright", legend = levels(factor(Sample_meta$Date)), pch = 16,
 
 ```
 
-
+We investigate the tier information 
 ```{r Tier_information, echo=FALSE}
 ### Tier Information ####
 FS_tier <- as.matrix(FS_tier)
@@ -129,17 +137,117 @@ ggplot(FS_tier_info, aes(x = keep)) +
   labs(title = "Binning features by tier", subtitle = "Bin 0 = Tier 4-5, Bin 1 = Tier 1-3", x = "Categories")+
   theme_bw()
 
-
 ```
+
+
 
 ```{r filter_byTier, echo=FALSE}
 keep_features <- FS_tier_info[which(FS_tier_info$keep == 1),1]
+filtered_features <- FS_tier_info[which(FS_tier_info$keep == 0),1]
 
-
+#Filtered dataframe removing features binned into category zero
 filtered_FS_Metabolomics_df <- FS_LfQ[which(rownames(FS_LfQ) %in% keep_features),]
 t_filtered_FS_Metabolomics_df <- t(filtered_FS_Metabolomics_df)
 
 rownames(t_filtered_FS_Metabolomics_df) <- make.unique(Sample_meta$Sample_ID)
+
+#Exploring the metabolites that were filtered
+Removed_FS_Metabolomics_df <- FS_LfQ[which(rownames(FS_LfQ) %in% filtered_features),]
+t_Removed_FS_Metabolomics_df <- t(Removed_FS_Metabolomics_df)
+
+#Formatting of dataframe
+rownames(t_Removed_FS_Metabolomics_df) <- make.unique(Sample_meta$Sample_ID)
+t_Removed_FS_Metabolomics_df <- t_Removed_FS_Metabolomics_df[sort(rownames(t_Removed_FS_Metabolomics_df)),]
+colnames(t_Removed_FS_Metabolomics_df) <- gsub(" ", "", colnames(t_Removed_FS_Metabolomics_df))
+
+#Visualize distribution of data
+hist(t_Removed_FS_Metabolomics_df)
+
+```
+
+```{r imputed_lfQ_lm, echo=FALSE}
+linearMod_df <- data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_Removed_FS_Metabolomics_df)
+
+#example
+example_df <- data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_Removed_FS_Metabolomics_df[,1])
+linearMod_strain_batch_removedfeature <- lm(example_df[,3] ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date., 
+                                            data = example_df)
+plot(linearMod_strain_batch_removedfeature)
+anova_strain_batch_removedfeature <- aov(linearMod_strain_batch_removedfeature)
+summary(anova_strain_batch_removedfeature)
+
+TukeyHSD(anova_strain_batch_removedfeature)
+
+# Prepare for Loop and using glmer
+loop_linearMod_df <- rownames_to_column(data.frame(t_Removed_FS_Metabolomics_df), var = "Strain_ID")
+loop_linearMod_df$Strain_ID <- factor(sub("-.*","",loop_linearMod_df$Strain_ID))
+
+use.names = colnames(loop_linearMod_df[,-1]) 
+x <- as.list(use.names[[1]])
+y <- x[[1]]
+l.list <- lapply(as.list(use.names), function(x) {d <- loop_linearMod_df[ ,c(1,which(colnames(loop_linearMod_df) == as.character(eval(x))))]
+                 mod <- lm(d[,2] ~ Strain_ID, data = d)})
+
+
+
+plot(l.list[[1]])
+
+summary(l.list[[1]])
+aov(l.list[[1]])
+
+TukeyHSD(aov(l.list[[1]]))
+
+
+
+
+
+
+
+
+linearMod_list <- vector(mode = "list", length = ncol(linearMod_df[,-c(1:2)]))
+for(i in 1:ncol(linearMod_df[,-c(1:2)])){
+    linearMod_list[i] <- aov(lm(t_Removed_FS_Metabolomics_df[,i] ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date., data = linearMod_df))
+}
+
+
+formula <- as.formula(paste0("cbind(", paste(colnames(t_Removed_FS_Metabolomics_df), collapse = ","), ") ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date."))
+
+fit <- aov(formula, data=linearMod_df)
+summary(fit)
+
+```
+
+```{r imputed_tier_lm, echo=FALSE}
+
+
+Removed_tier_df <- FS_tier[which(rownames(FS_tier) %in% filtered_features),]
+t_Removed_tier_df <- t(Removed_tier_df)
+
+rownames(t_Removed_tier_df) <- make.unique(Sample_meta$Sample_ID)
+t_Removed_tier_df <- t_Removed_tier_df[sort(rownames(t_Removed_tier_df)),]
+colnames(t_Removed_tier_df) <- gsub(" ", "", colnames(t_Removed_tier_df))
+
+linearMod_tier_df <- data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_Removed_tier_df)
+
+linearMod_tier_removedfeature <- lm(linearMod_tier_df[,3] ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date., 
+                                            data = linearMod_tier_df)
+plot(linearMod_tier_removedfeature)
+anova_tier_removedfeature <- aov(linearMod_tier_removedfeature)
+summary(anova_tier_removedfeature)
+
+TukeyHSD(anova_tier_removedfeature)
+
+
+formula_tier <- as.formula(paste0("cbind(", paste(colnames(t_Removed_tier_df), collapse = ","), ") ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date."))
+
+Lm_tier <- lm(formula_tier, data = linearMod_tier_df)
+plot(Lm_tier$residuals[,2])
+
+fit_tier <- aov(formula_tier, data=linearMod_tier_df)
+summary(fit_tier)
+
+t_Removed_tier_df[t_Removed_tier_df == 4]
+
 
 ```
 
@@ -166,4 +274,79 @@ fviz_pca_ind(res.pca_filtered,
              repel = TRUE) +
   labs(title = "Filtered by Tier Founder Strain Metabolomics - LIVER", x = "PC1", y = "PC2")+
   theme_bw()
+```
+
+
+```{r Median_Normalization_prep, echo=FALSE}
+
+filtered_50percent_df <-data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_filtered_FS_Metabolomics_df)
+rownames(filtered_50percent_df) <- rownames(t_filtered_FS_Metabolomics_df)
+hist(t_filtered_FS_Metabolomics_df, breaks = 50)
+abline(v=median(t_filtered_FS_Metabolomics_df), col="red", lwd = 3)
+print(paste("Median of complete dataframe:", median(t_filtered_FS_Metabolomics_df)))
+
+
+Batch1 <- filtered_50percent_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),]
+
+hist(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),], breaks = 50)
+abline(v=median(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),]), col="red", lwd = 3)
+
+median1 = median(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),])
+print(paste("Median of Batch1:", median1))
+
+Batch1median <- apply(Batch1[,-c(1:2)], 2, median)
+hist(Batch1median, breaks = 50)
+
+
+Batch2 <- filtered_50percent_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),]
+
+hist(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),], breaks = 50)
+abline(v=median(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),]), col="red", lwd = 3)
+median2 <- median(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),])
+print(paste("Median of Batch2:", median2))
+
+Batch2median <- apply(Batch2[,-c(1:2)], 2, median)
+hist(Batch2median, breaks = 50)
+
+
+```
+
+```{r Filtered_Median_Normalization, echo=FALSE}
+scaleFactor <- Batch1median/Batch2median
+
+Batch2_normalized <- apply(Batch2[,-c(1:2)],1, function(x) x*scaleFactor)
+
+t_Batch2_normalized <- t(Batch2_normalized)
+
+Batch1_Batch2_normalized <- cbind(filtered_50percent_df$factor.Sample_meta.Strain.[-grep("GC",filtered_50percent_df[,1])],
+                                  filtered_50percent_df$factor.Sample_meta.Date.[-grep("GC", filtered_50percent_df[,1])],
+                                  rbind(Batch1[,-c(1:2)],t_Batch2_normalized))
+
+colnames(Batch1_Batch2_normalized) <- c("Strain", "DateOfAnalysis", colnames(Batch1_Batch2_normalized[,-c(1:2)]))
+
+
+
+res.pca_normalized <- prcomp(Batch1_Batch2_normalized[,-c(1:2)] , scale. = TRUE)
+
+fviz_eig(res.pca_normalized) 
+fviz_pca_ind(res.pca_normalized,
+             geom = c("point","text"),
+             labelsize = 2,
+             habillage = Batch1_Batch2_normalized$Strain,
+             # addEllipses = TRUE,
+             # ellipse.level = 0.95,
+             repel = TRUE) +
+  labs(title = "Filtered by Tier Founder Strain Metabolomics - LIVER", x = "PC1", y = "PC2")+
+  theme_bw()
+
+fviz_pca_ind(res.pca_normalized,
+             geom = c("point","text"),
+             labelsize = 2,
+             habillage = Batch1_Batch2_normalized$DateOfAnalysis,
+             # addEllipses = TRUE,
+             # ellipse.level = 0.95,
+             repel = TRUE) +
+  labs(title = "Filtered by Tier Founder Strain Metabolomics - LIVER", x = "PC1", y = "PC2")+
+  theme_bw()
+
 ```
