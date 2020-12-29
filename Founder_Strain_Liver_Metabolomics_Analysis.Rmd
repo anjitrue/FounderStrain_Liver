@@ -17,7 +17,7 @@ The overaching goal will be to visualize the Liver GC Metabolomics data from the
 ```{r setup, include=FALSE}
 require(knitr)
 opts_knit$set(root.dir = "P:/EAT_20190812_DO_Search05/FounderStrain")
-knitr::opts_chunk$set(root.dir = "P:/EAT_20190812_DO_Search05/FounderStrain/DataAnalysis/", warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(root.dir = "P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/", warning = FALSE, message = FALSE)
 ```
 
 ```{r install_packages, echo=FALSE}
@@ -25,8 +25,20 @@ library(plyr)
 library(tidyr)
 library(dplyr)
 library(tibble)
+library(broom)
 library(ggplot2)
 library(factoextra)
+
+library(gridExtra)
+library(grid)
+
+library(ISLR)
+library(MASS)
+library(lme4)
+library(haven)
+library(tidyverse)
+library(RColorBrewer)
+library(lmerTest)
 
 library(pcaMethods)
 library(plotly)
@@ -41,7 +53,7 @@ load("P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/Founder_Strai
 
 ```
 
-## Including Plots
+## Visualization of FS Liver GC-Metabolomics
 Visualization of Founder Strain Liver GC-Metabolomics data set before normalization. The PCA plot uses the package prcomp and fviz_pca_ind for visualization. An Scree plot describes how the variability in the data is described in each plane. The data is colored by date analyzed. Notice that two extra data points were included - controls from the DO dataset.
 ```{r PCA_plots, echo=FALSE}
 res.pca <- prcomp(t_FS_Metabolomics_df, scale. = TRUE)
@@ -84,12 +96,13 @@ legend("topright", legend = levels(factor(Sample_meta$Date)), pch = 16,
 
 ```
 
-We investigate the tier information 
+The feature data has extra information indicating the quality of the spectral data collected for that feature in a specific sample. The measuremnt for each feature and in each sample is binned into tier 1-5. From the roughly 34,000 measurements quantified using our GC-NWK-pipeline, I took a look at the overview of the tier information, providing counts for each tier.  
+I further bins the features into two categories: Category 0 for features where greater than 50% of the measurements where imputed and Category 1 where less than 50% of the measurements were imputed (majority of the data in Tiers 1,2, and 3). Implementing the 50% threshold results in a total of 473 features in category 1 and 29 features in category 0.
 ```{r Tier_information, echo=FALSE}
 ### Tier Information ####
 FS_tier <- as.matrix(FS_tier)
 
-length(grep("unknown", rownames(FS_tier)))
+#length(grep("unknown", rownames(FS_tier)))
 
 FS_tier_unknown <- FS_tier[grep("unknown", rownames(FS_tier)),]
 FS_tier_id <- FS_tier[-grep("unknown", rownames(FS_tier)),]
@@ -134,12 +147,12 @@ ggplot(FS_tier_info, aes(x = keep)) +
   geom_text(stat = 'count', aes(label=..count..), color = "white", vjust = 1.25)+
   scale_x_continuous(breaks = seq(0,1,1), limit = c(-0.5,1.5))+
   #scale_x_discrete(name = "Categories", limits = c("less than 50%", "above 50%"))+
-  labs(title = "Binning features by tier", subtitle = "Bin 0 = Tier 4-5, Bin 1 = Tier 1-3", x = "Categories")+
+  labs(title = "Categorizing features", subtitle = "Category 0 = >50% of measurements were imputed\nCategory 1 = <50% of measurements imputed", x = "Categories")+
   theme_bw()
 
 ```
 
-
+A histogram of LFQ values from the features that were filtered out, due to >50% of the measurements for the feature in tier 4 and tier5
 
 ```{r filter_byTier, echo=FALSE}
 keep_features <- FS_tier_info[which(FS_tier_info$keep == 1),1]
@@ -161,64 +174,124 @@ t_Removed_FS_Metabolomics_df <- t_Removed_FS_Metabolomics_df[sort(rownames(t_Rem
 colnames(t_Removed_FS_Metabolomics_df) <- gsub(" ", "", colnames(t_Removed_FS_Metabolomics_df))
 
 #Visualize distribution of data
-hist(t_Removed_FS_Metabolomics_df)
+hist(t_Removed_FS_Metabolomics_df,
+     main = "LFQ distribution of features with >50% of measurements in tier4 & tier5",
+     xlab = "LFQ in Log2 space")
 
 ```
 
-```{r imputed_lfQ_lm, echo=FALSE}
-linearMod_df <- data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_Removed_FS_Metabolomics_df)
+### Linear Modeling - dependence on strain and date
 
-#example
-example_df <- data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_Removed_FS_Metabolomics_df[,1])
-linearMod_strain_batch_removedfeature <- lm(example_df[,3] ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date., 
+#### Linear model on one feature
+We would like to know if there are features with high numbers of imputed measurements because the feature is measured in specific strains and not others. I will try to build a model to help me distinguish which features are strain specific.  
+
+First attempt in creating a model: Linear model on LFQ values of feature unknown RT 2.335871  
+unknown RT 2.335871 ~ Strain + Date,data = example_df)  
+1. Plot the linear model output   
+2. Perform aov on linear model and summary ouput   
+3. Correct p-values with TukeyHSD  
+```{r example_imputed_lfQ_lm, echo=FALSE}
+
+# Prepare dataframe for loop
+Strain <- factor(Sample_meta$Strain[match(rownames(t_Removed_FS_Metabolomics_df),rownames(Sample_meta))])
+Date <- factor(Sample_meta$Date[match(rownames(t_Removed_FS_Metabolomics_df), rownames(Sample_meta))])
+
+linearMod_df <- data.frame(Strain,Date,t_Removed_FS_Metabolomics_df)
+
+#example linear model on first entry in category 0 feature list
+example_df <- data.frame(Strain,Date,t_Removed_FS_Metabolomics_df[,1])
+colnames(example_df) <- c("Strain", "Date", "unknownRT2.335871")
+example_df <- example_df[-grep("GC", example_df$Strain),]
+linearMod_strain_batch_unknownRT2.335871 <- lm(unknownRT2.335871 ~ Strain + Date, 
                                             data = example_df)
-plot(linearMod_strain_batch_removedfeature)
-anova_strain_batch_removedfeature <- aov(linearMod_strain_batch_removedfeature)
-summary(anova_strain_batch_removedfeature)
+plot(linearMod_strain_batch_unknownRT2.335871)
+anova_strain_batch_unknownRT2.335871 <- aov(linearMod_strain_batch_unknownRT2.335871)
+summary(anova_strain_batch_unknownRT2.335871)
 
-TukeyHSD(anova_strain_batch_removedfeature)
+TukeyHSD(anova_strain_batch_unknownRT2.335871)
+```
 
-# Prepare for Loop and using glmer
-loop_linearMod_df <- rownames_to_column(data.frame(t_Removed_FS_Metabolomics_df), var = "Strain_ID")
-loop_linearMod_df$Strain_ID <- factor(sub("-.*","",loop_linearMod_df$Strain_ID))
+#### Lapply the linear model for all 29 features
+Loop through all the 29 features and perform the linear model on the LFQ values for each feature. Stitch the lm plots, aov summaries and TukeyHSD into csv and save in the directory P:-> EAT_20190812_DO_Search05-> FounderStrain -> Liver -> DataAnalysis ->      
+  
+1. LM_coeff_FS_Liver_GCMetabolomics  
+2. AOV_Summary_FS_Liver_GCMetabolomics  
+3. TukeyHSD_adjustment_FS_Liver_GCMetabolomics
+```{r loop_LFQ_lm, echo=FALSE}
+# Prepare for Loop using lapply to iterate through all feature
+# create a vector of all the features in category zero that will have the model applied to
+use.names = colnames(linearMod_df[,-c(1:2)]) 
 
-use.names = colnames(loop_linearMod_df[,-1]) 
-x <- as.list(use.names[[1]])
-y <- x[[1]]
-l.list <- lapply(as.list(use.names), function(x) {d <- loop_linearMod_df[ ,c(1,which(colnames(loop_linearMod_df) == as.character(eval(x))))]
-                 mod <- lm(d[,2] ~ Strain_ID, data = d)})
-
-
-
-plot(l.list[[1]])
-
-summary(l.list[[1]])
-aov(l.list[[1]])
-
-TukeyHSD(aov(l.list[[1]]))
-
+# Use lapply to iterate through each name and produce a list of linear models 
+l.list <- lapply(as.list(use.names), function(x) {d <- linearMod_df[ ,c(1,which(colnames(linearMod_df) == as.character(eval(x))))]
+mod <- lm(d[,2] ~ Strain + Date , data = d)})
+# Give each entry in the list the name of the feature used in the model
+names(l.list) <- use.names
 
 
+#for (i in 1:length(l.list)) {
+  #pdf(file = paste0("P:/EAT_20190812_DO_Search05/FounderStrain/Liver/RFigures/",names(l.list)[i],"Plot_lm_CategoryZero.pdf"))
+#  plot(l.list[[i]])
+  #dev.off()
+#}
+
+#pdf(file = "P:/EAT_20190812_DO_Search05/FounderStrain/Liver/RFigures/Plot_lm_CategoryZero.pdf")
+#lapply(l.list , function(x){
+#  grid.newpage()
+#  plot(x)
+#  }) 
+#dev.off()
 
 
-
-
-
-linearMod_list <- vector(mode = "list", length = ncol(linearMod_df[,-c(1:2)]))
-for(i in 1:ncol(linearMod_df[,-c(1:2)])){
-    linearMod_list[i] <- aov(lm(t_Removed_FS_Metabolomics_df[,i] ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date., data = linearMod_df))
+add.featureName <- function(a){
+  df<- tidy(a)
+  df$feature <- rep(names(x), nrow(df))
+  return(df)
 }
 
+coefflist = list()
+for (i in 1:length(l.list)) {
+  x <- l.list[i]
+  a <- x[[1]]
+  feature_coeff <- add.featureName(a)
+  coefflist[[i]] <- feature_coeff
+}
 
-formula <- as.formula(paste0("cbind(", paste(colnames(t_Removed_FS_Metabolomics_df), collapse = ","), ") ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date."))
+df_coeff_stacked <- do.call(rbind, coefflist)
 
-fit <- aov(formula, data=linearMod_df)
-summary(fit)
+aov_list = list()
+for(i in 1:length(l.list)){
+  x <- l.list[i]
+  a <- aov(x[[1]])
+  feature_aov <- add.featureName(a)
+  aov_list[[i]] <- feature_aov
+}
+
+df_aov_stacked <- do.call(rbind, aov_list)
+
+TukeyHSD_list <- list()
+for(i in 1:length(l.list)){
+  a <- TukeyHSD(aov(l.list[[i]]))
+  feature_TukeyHSD <- add.featureName(a)
+  TukeyHSD_list[[i]] <- feature_TukeyHSD
+} 
+
+#write.csv(df_coeff_stacked, "P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/LM_coeff_FS_Liver_GCMetabolomics.csv")
+#write.csv(df_aov_stacked, "P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/AOV_Summary_FS_Liver_GCMetabolomics.csv")
+#write.csv(df_TukeyHSD_stacked, "P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/TukeyHSD_adjustment_FS_Liver_GCMetabolomics.csv")
 
 ```
 
-```{r imputed_tier_lm, echo=FALSE}
+### Linear Model on Tier information - dependence on strain and date
 
+Second attempt in creating a model: Linear model on tier values of feature unknown RT 2.335871  
+unknown RT 2.335871 ~ Strain + Date,data = example_df)  
+1. Plot the linear model output   
+
+A snap shot of the tier matrix is printed for the 29 filtered features.  
+  
+The linear model on tier information may not be the most appropriate because the tiers are categories not numericals.
+```{r imputed_tier_lm, echo=FALSE}
 
 Removed_tier_df <- FS_tier[which(rownames(FS_tier) %in% filtered_features),]
 t_Removed_tier_df <- t(Removed_tier_df)
@@ -226,31 +299,67 @@ t_Removed_tier_df <- t(Removed_tier_df)
 rownames(t_Removed_tier_df) <- make.unique(Sample_meta$Sample_ID)
 t_Removed_tier_df <- t_Removed_tier_df[sort(rownames(t_Removed_tier_df)),]
 colnames(t_Removed_tier_df) <- gsub(" ", "", colnames(t_Removed_tier_df))
+head(t_Removed_tier_df[,1:6])
 
 linearMod_tier_df <- data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_Removed_tier_df)
+colnames(linearMod_tier_df) <- c("Strain", "Date", colnames(t_Removed_tier_df))
 
-linearMod_tier_removedfeature <- lm(linearMod_tier_df[,3] ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date., 
+
+# Example linear model
+linearMod_tier_filteredfeature <- lm(unknownRT2.335871 ~ Strain + Date, 
                                             data = linearMod_tier_df)
-plot(linearMod_tier_removedfeature)
-anova_tier_removedfeature <- aov(linearMod_tier_removedfeature)
-summary(anova_tier_removedfeature)
+plot(linearMod_tier_filteredfeature)
+```
 
-TukeyHSD(anova_tier_removedfeature)
+### Logistical regression on categories 0 and 1 - dependence on strain and date
+
+Third attempt in creating a model: replace tier information with category 0 (measurments in tier 4 and 5) and category 1 (measurements in tier 1,2,and 3) and perform a logistic regression.
+
+Example of matrix of categories 0's and 1's.
+
+I also visualized each feature that has been filtered based on imputation to explore which categories the samples bin into based on strain.
+
+```{r imputed_category_visualization, echo=FALSE}
+# Replace tiers with categories 0 and 1
+old <- 1:5
+new <- c(1,1,1,0,0)
+
+Filtered_categories_matrix <- apply(linearMod_tier_df[,c(3:ncol(linearMod_tier_df))], 2, function(x){x[x %in% old] <- new[match(x, old, nomatch = 0)] })
+Filtered_categories_df <- data.frame(Strain, Date, Filtered_categories_matrix)
+rownames(Filtered_categories_df) <- rownames(linearMod_tier_df)
+
+head(Filtered_categories_df[,1:6])
+
+# plot each feature to visualize how the categories across each strain
+for (i in 1:length(use.names)) {
+  p <- ggplot(data = Filtered_categories_df, aes(x = Strain, 
+                                                 y = Filtered_categories_df[,which(colnames(Filtered_categories_df) == use.names[i])])) +
+  geom_jitter(width = 0.1, height = 0.05)+
+  labs(title = paste0("Filtered feature: ",use.names[i]),y = use.names[i])
+  print(p)
+}
+
+```
 
 
-formula_tier <- as.formula(paste0("cbind(", paste(colnames(t_Removed_tier_df), collapse = ","), ") ~ factor.Sample_meta.Strain. + factor.Sample_meta.Date."))
 
-Lm_tier <- lm(formula_tier, data = linearMod_tier_df)
-plot(Lm_tier$residuals[,2])
+```{r imputed_logistic_regression_categories, echo=FALSE}
+# Example logistic regression
+binomialMod_categories_filteredfeature <- glm(Filtered_categories_df[,15] ~ Strain + Date, 
+                                            data = Filtered_categories_df, family = binomial(link = "logit"))
+summary(binomialMod_categories_filteredfeature)
+plot(binomialMod_categories_filteredfeature)
 
-fit_tier <- aov(formula_tier, data=linearMod_tier_df)
-summary(fit_tier)
 
-t_Removed_tier_df[t_Removed_tier_df == 4]
+
+# Ordered logistic regression
+binomialMod_categories_filteredfeature <- glm(Filtered_categories_df[,3] ~ Strain + Date, 
+                                            data = Filtered_categories_df, family = binomial)
 
 
 ```
 
+PCA plots of data that was filtered based on 50% cut-off
 ```{r filtered_PCA, echo=FALSE}
 res.pca_filtered <- prcomp(t_filtered_FS_Metabolomics_df[-grep("GC-EAT", rownames(t_filtered_FS_Metabolomics_df)),], scale. = TRUE)
 
@@ -276,7 +385,7 @@ fviz_pca_ind(res.pca_filtered,
   theme_bw()
 ```
 
-
+#### Median Normalization
 ```{r Median_Normalization_prep, echo=FALSE}
 
 filtered_50percent_df <-data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_filtered_FS_Metabolomics_df)
@@ -311,7 +420,28 @@ hist(Batch2median, breaks = 50)
 
 ```
 
+```{r removed_Median_Normalization, echo=FALSE}
+Batch1removed <- linearMod_df[which(linearMod_df$Date == 20160728),]
+Batch2removed <- linearMod_df[which(linearMod_df$Date == 20160731),]
+
+Batch1removed_median <- apply(Batch1removed[,-c(1:2)], 2, median)
+Batch2removed_median <- apply(Batch2removed[,-c(1:2)], 2, median)
+
+scaleFactor_removed <- Batch1removed_median/Batch2removed_median
+Batch2removed_normalized <- apply(Batch2removed[,-c(1:2)],1, function(x) x*scaleFactor_removed)
+t_Batch2removed_normalized <- t(Batch2removed_normalized)
+
+Batch1_Batch2_removednormalized <- cbind(filtered_50percent_df$factor.Sample_meta.Strain.[-grep("GC",filtered_50percent_df[,1])],
+                                  filtered_50percent_df$factor.Sample_meta.Date.[-grep("GC", filtered_50percent_df[,1])],
+                                  rbind(Batch1removed[,-c(1:2)],t_Batch2removed_normalized))
+
+t_Batch1_Batch2_removednormalized <- t(Batch1_Batch2_removednormalized)
+Batch1_Batch2_removednormalized$Category <- rep(0, nrow(Batch1_Batch2_removednormalized))
+
+```
+
 ```{r Filtered_Median_Normalization, echo=FALSE}
+
 scaleFactor <- Batch1median/Batch2median
 
 Batch2_normalized <- apply(Batch2[,-c(1:2)],1, function(x) x*scaleFactor)
@@ -322,9 +452,13 @@ Batch1_Batch2_normalized <- cbind(filtered_50percent_df$factor.Sample_meta.Strai
                                   filtered_50percent_df$factor.Sample_meta.Date.[-grep("GC", filtered_50percent_df[,1])],
                                   rbind(Batch1[,-c(1:2)],t_Batch2_normalized))
 
+#write.csv(Batch1_Batch2_normalized, "P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/Founder_Strain_Liver_GCMetabolomics_MedianNormalized_20201228.csv")
+
 colnames(Batch1_Batch2_normalized) <- c("Strain", "DateOfAnalysis", colnames(Batch1_Batch2_normalized[,-c(1:2)]))
 
+```
 
+```{r Normalized_PCA, echo=FALSE}
 
 res.pca_normalized <- prcomp(Batch1_Batch2_normalized[,-c(1:2)] , scale. = TRUE)
 
