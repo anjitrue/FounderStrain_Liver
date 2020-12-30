@@ -175,7 +175,7 @@ colnames(t_Removed_FS_Metabolomics_df) <- gsub(" ", "", colnames(t_Removed_FS_Me
 
 #Visualize distribution of data
 hist(t_Removed_FS_Metabolomics_df,
-     main = "LFQ distribution of features with >50% of measurements in tier4 & tier5",
+     main = "LFQ distribution of features with >50% of measurements in tier4/tier5",
      xlab = "LFQ in Log2 space")
 
 ```
@@ -390,36 +390,48 @@ fviz_pca_ind(res.pca_filtered,
 
 filtered_50percent_df <-data.frame(factor(Sample_meta$Strain),factor(Sample_meta$Date),t_filtered_FS_Metabolomics_df)
 rownames(filtered_50percent_df) <- rownames(t_filtered_FS_Metabolomics_df)
-hist(t_filtered_FS_Metabolomics_df, breaks = 50)
+hist(t_filtered_FS_Metabolomics_df, 
+     main = "Histogram of filtered dataset",
+     breaks = 50)
 abline(v=median(t_filtered_FS_Metabolomics_df), col="red", lwd = 3)
 print(paste("Median of complete dataframe:", median(t_filtered_FS_Metabolomics_df)))
 
 
 Batch1 <- filtered_50percent_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),]
 
-hist(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),], breaks = 50)
+hist(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),], 
+     main = "Histogram of filtered data collected 2016/07/28 Batch1",
+     breaks = 50)
 abline(v=median(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),]), col="red", lwd = 3)
 
 median1 = median(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160728),])
 print(paste("Median of Batch1:", median1))
 
 Batch1median <- apply(Batch1[,-c(1:2)], 2, median)
-hist(Batch1median, breaks = 50)
+hist(Batch1median, 
+     main= "Histogram of median values for each feature in Batch1 ",
+     breaks = 50)
 
 
 Batch2 <- filtered_50percent_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),]
 
-hist(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),], breaks = 50)
+hist(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),], 
+     main = "Histogram of filtered data collected 2016/07/31 Batch2",
+     breaks = 50)
 abline(v=median(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),]), col="red", lwd = 3)
 median2 <- median(t_filtered_FS_Metabolomics_df[which(filtered_50percent_df$factor.Sample_meta.Date. == 20160731),])
 print(paste("Median of Batch2:", median2))
 
 Batch2median <- apply(Batch2[,-c(1:2)], 2, median)
-hist(Batch2median, breaks = 50)
+hist(Batch2median, 
+     main = "Histogram of median values for each feature in Batch2 ",
+     breaks = 50)
 
 
 ```
+## Median Normalization
 
+The approach for normalizationn is to scale the median of batch2 to equal the median of batch1. 
 ```{r removed_Median_Normalization, echo=FALSE}
 Batch1removed <- linearMod_df[which(linearMod_df$Date == 20160728),]
 Batch2removed <- linearMod_df[which(linearMod_df$Date == 20160731),]
@@ -435,8 +447,8 @@ Batch1_Batch2_removednormalized <- cbind(filtered_50percent_df$factor.Sample_met
                                   filtered_50percent_df$factor.Sample_meta.Date.[-grep("GC", filtered_50percent_df[,1])],
                                   rbind(Batch1removed[,-c(1:2)],t_Batch2removed_normalized))
 
-t_Batch1_Batch2_removednormalized <- t(Batch1_Batch2_removednormalized)
-Batch1_Batch2_removednormalized$Category <- rep(0, nrow(Batch1_Batch2_removednormalized))
+t_Batch1_Batch2_removednormalized <- data.frame(t(Batch1_Batch2_removednormalized[,-c(1:2)]))
+t_Batch1_Batch2_removednormalized$Category <- rep(0, nrow(t_Batch1_Batch2_removednormalized))
 
 ```
 
@@ -456,8 +468,16 @@ Batch1_Batch2_normalized <- cbind(filtered_50percent_df$factor.Sample_meta.Strai
 
 colnames(Batch1_Batch2_normalized) <- c("Strain", "DateOfAnalysis", colnames(Batch1_Batch2_normalized[,-c(1:2)]))
 
+t_Batch1_Batch2_normalized <- data.frame(t(Batch1_Batch2_normalized[,-c(1:2)]))
+t_Batch1_Batch2_normalized$Category <- rep(1, nrow(t_Batch1_Batch2_normalized))
+
+Normalized_FS_forCollaborator <- rbind(t_Batch1_Batch2_normalized, t_Batch1_Batch2_removednormalized)
+
+#write.csv(Normalized_FS_forCollaborator,"P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/Median_Normalized_FS_Liver_GCMetabolomics_EAT_20201229.csv")
+
 ```
 
+PCA plots of normalized data - filtered using the 50% cut-off
 ```{r Normalized_PCA, echo=FALSE}
 
 res.pca_normalized <- prcomp(Batch1_Batch2_normalized[,-c(1:2)] , scale. = TRUE)
