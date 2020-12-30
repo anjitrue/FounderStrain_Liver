@@ -22,7 +22,7 @@ colors <- c("#206F94", # teal
 )
 
 #Read csv
-FS_Metabolomics<- read.csv("P:/EAT_20190812_DO_Search05/FounderStrain/QuantResults_202012111815107115_editKAO_forR.csv", header = TRUE, sep = ",", stringsAsFactors = FALSE)
+FS_Metabolomics<- read.csv("P:/EAT_20190812_DO_Search05/FounderStrain/Liver/QuantResults_202012111815107115_editKAO_forR.csv", header = TRUE, sep = ",", stringsAsFactors = FALSE)
 rownames(FS_Metabolomics) <- make.unique(FS_Metabolomics$Feature.ID)
 
 FS_Metabolomics_df <- FS_Metabolomics[,-c(1)]
@@ -42,13 +42,15 @@ Sample_meta <- as.data.frame(sample.names) %>% separate(sample.names, into = pas
 #Rename column names
 colnames(Sample_meta) <- c("Date", "Scientist_Initials", "Sample_Type", "Strain", "Sample_ID", 
                            "Sample_Prep_Number", "Sample_Queue_Number")
+
 #Use if else statement to check if the Date contains an X as the first character, then remove
   Sample_meta$Date <- ifelse(substr(Sample_meta$Date,1,1) == "X", sub("^.", "", Sample_meta$Date), Sample_meta$Date)
   
   Sample_meta$Strain <- sub("Cast", "CAST", Sample_meta$Strain)
 #Concatonate the Sample_ID to contain strain and number information
   Sample_meta$Sample_ID <- paste0(Sample_meta$Strain,"-", Sample_meta$Sample_ID)
-  
+#Unique rownames
+  rownames(Sample_meta) <- make.unique(Sample_meta$Sample_ID)
 #Determine the number of mice in each strain
   table(Sample_meta$Strain)
 
@@ -63,6 +65,6 @@ rownames(t_FS_Metabolomics_df) <- make.unique(Sample_meta$Sample_ID)
 
 
 save(colors,FS_LfQ, FS_tier, FS_quantMZ, FS_RT, Sample_meta, FS_Metabolomics_df, t_FS_Metabolomics_df, 
-     file = "P:/EAT_20190812_DO_Search05/FounderStrain/DataAnalysis/Founder_Strain_Metabolomics_data.Rdata")
+     file = "P:/EAT_20190812_DO_Search05/FounderStrain/Liver/DataAnalysis/Founder_Strain_Metabolomics_data.Rdata")
 
 
